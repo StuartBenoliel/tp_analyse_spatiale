@@ -56,48 +56,49 @@ plot(st_geometry(dept_bretagne))
 fond_dept <- communes_Bretagne %>%
   group_by(dep) %>%
   summarise() %>%
-  st_union()
+  st_union(by_feature = TRUE)
 
-plot(fond_dept)
+plot(st_geometry(fond_dept))
 
 # 14. Créer une table "centroid_dept_bretagne"
 centroid_dept_bretagne <- dept_bretagne %>%
   st_centroid()
+st_geometry_type(centroid_dept_bretagne)
 
 # 14.b. Représenter les départements et leurs centroïdes
-plot(fond_dept)
+plot(st_geometry(fond_dept))
 plot(st_geometry(centroid_dept_bretagne), add = TRUE)
 
 # 14.c. Ajouter le nom du département dans le fond de centroïdes
-centroid_dept_bretagne$dept_lib <- dept_bretagne$dep
-centroid_dept_bretagne_with_names <- merge(centroid_dept_bretagne, dept_bretagne, by = "dep")
+dept_names <- data.frame(dep = unique(communes_Bretagne$dep), dept_lib = c("Côtes-d'Armor", "Finistère", "Ille-et-Vilaine", "Morbihan"))
+centroid_dept_bretagne <- merge(centroid_dept_bretagne, dept_names, by = "dep")
 
 # 14.d. Récupérer les coordonnées des centroïdes
 centroid_coords <- st_coordinates(centroid_dept_bretagne)
-centroid_coords_df <- as.data.frame(centroid_coords)
-centroid_dept_bretagne_with_names <- bind_cols(centroid_coords_df, centroid_dept_bretagne_with_names)
+centroid_coords <- bind_cols(centroid_coords, select(centroid_dept_bretagne, dep, dept_lib))
+centroid_coords <- st_drop_geometry(centroid_coords)
 
 # 14.e. Représenter les départements, leurs centroïdes et leurs noms
-plot(fond_dept)
-plot(st_geometry(centroid_dept_bretagne_with_names), add = TRUE)
-text(st_geometry(centroid_dept_bretagne_with_names), labels = centroid_dept_bretagne_with_names$dept_lib, cex = 0.8)
+plot(st_geometry(fond_dept))
+plot(st_geometry(centroid_dept_bretagne), add = TRUE)
+text(centroid_coords$X, centroid_coords$Y- 10000, labels = centroid_coords$dept_lib)
 
 # 15. Retrouver dans quelle commune se situe le centroïde de chaque département breton
-communes_Bretagne_with_dept <- st_join(communes_Bretagne, centroid_dept_bretagne)
+intersects_result <- st_intersects(centroid_dept_bretagne, communes_Bretagne)
 
 # 16. Utiliser st_intersection() et st_within()
-communes_Bretagne_with_dept_intersection <- st_intersection(communes_Bretagne, centroid_dept_bretagne)
-communes_Bretagne_with_dept_within <- st_within(centroid_dept_bretagne, communes_Bretagne)
+intersection_result <- st_intersection(centroid_dept_bretagne, communes_Bretagne)
+within_result <- st_within(centroid_dept_bretagne, communes_Bretagne)
 
 # 17. Calculer la distance entre les centroïdes des départements et leurs chefs-lieux
 chefs_lieux <- communes_Bretagne %>%
-  filter(dep %in% c("22", "29", "35", "56") & code %in% c("22070", "29105", "35238", "56260")) %>%
+  filter(code %in% c("22278", "29232", "35238", "56260")) %>%
   st_centroid()
 
 distances <- st_distance(centroid_dept_bretagne, chefs_lieux)
 
 # 18.a. Créer une zone de 20 km autour des centroïdes
-buffer_20km <- st_buffer(st_geometry(centroid_dept_bretagne), dist = 20000)
+buffer_20km <- st_buffer(st_geometry(centroid_dept_bretagne), dist = units::set_units(20, km))
 
 # 18.b. Représenter la géométrie obtenue
 plot(buffer_20km)
@@ -114,7 +115,9 @@ communes_count_by_dept <- communes_in_buffer %>%
 communes_Bretagne_WGS84 <- st_transform(communes_Bretagne, crs = 4326)
 
 # 19.b. Représenter le fond ainsi produit
-plot(communes_Bretagne_WGS84)
+plot(st_geometry(communes_Bretagne), lwd = 0.5)
+plot(st_geometry(communes_Bretagne_WGS84), lwd = 0.5)
 
 # 20. Recalculer l'aire des communes pour créer une variable surf3
-communes_Bretagne_WGS84$surf3 <- st_area(st_geometry(communes_Bretagne_WGS84)) / 1e6
+communes_Bretagne_WGS84$surf3 <- st_area(st_geometry(communes_Bretagne_WGS84)) %>% 
+  units::set_units("km^2")
