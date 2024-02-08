@@ -11,6 +11,7 @@ print("Informations sur la console :")
 print(communes)
 
 # 2. Résumé/descriptif du contenu
+str(communes)
 summary(communes)
 
 # 3. Afficher les dix premières lignes et regarder la dernière colonne
@@ -34,6 +35,8 @@ plot(communes_Bretagne, lwd = 0.1)
 
 # 8. Faire la question précédente en utilisant st_geometry dans votre plot
 plot(st_geometry(communes_Bretagne), lwd = 0.5)
+
+ggplot() + geom_sf(data= communes_Bretagne, fill ="steelblue") + theme_void()
 
 # 9. Créer une variable de surface appelée "surf2"
 communes_Bretagne$surf2 <- st_area(communes_Bretagne$geometry)
