@@ -111,7 +111,9 @@ summary(mars_rev_lisa)
 mean(mars_rev_lisa[,1])
 
 # Nombre d'indicateurs locaux négatifs
+table(mars_rev_lisa[, 1] < 0)
 sum(mars_rev_lisa[, 1] < 0)
+table(mars_rev_lisa[mars_rev_lisa[,5]< 0.05, "Ii"] < 0)
 
 # Ajout des LISA comme nouvelle variable du fond des iris
 marseille$LISA <- mars_rev_lisa[, 1]
