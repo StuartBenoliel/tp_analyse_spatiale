@@ -1,0 +1,350 @@
+---
+title: "TP package sf"
+output: pdf_document
+---
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE, results='hide',error=TRUE,eval = FALSE)
+```
+
+
+---
+
+
+
+
+## **OBJECTIFS DU TP:**
+
+- Le but de ce TP est de se familiariser à la manipulation d'objets spaciaux, à l'aide du package sf. Vous trouverez un cheatsheet [ici](https://osf.io/an6b5/download) 
+
+
+- Aﬁn d’utiliser une version de R plus récente (et une version du package sf plus récente aussi), vous travaillerez sur le datalab (plateforme du sspcloud, service de l’Insee) : https://datalab.sspcloud.fr. Il vous faudra créer un compte utilisateur et créer un service Rstudio.
+
+
+- Nous travaillerons avec les fonds disponibles sous “U:/Eleves/Cartographie/Fonds_carte”.
+
+
+**PS : Ce répertoire ne doit JAMAIS être votre répertoire de travail !** Il s’agit d’un répertoire où l’on met à disposition des fonds de carte au service de tout le monde. Leur modiﬁcation pénaliserait donc tous ses utilisateurs.
+
+
+---
+
+
+
+### Exercice 1
+
+0. Commencer par créer un projet Rstudio intitulé "tp_stats_spatiales". Cocher "Create a git repository". 
+
+Créer un dossier "fonds" dans le dossier du projet. 
+
+Uplodez le premier fonds de carte: 
+
+- Placez-vous dans ce dossier dans l'explorateur puis faire 
+- upload -\> aller sous U et choisir dans fonds_de_cartes le dossier zippé nommé commune_francemetro_2021.zip. 
+
+Charger ensuite les package `sf` et `dplyr`.
+
+```{r}
+# Chargement des packages
+library(sf)
+library(dplyr)
+```
+
+1. Importer le fond communal "commune_francemetro_2021.shp" disponible dans le dossier "France_metro". Pour cela vous utiliserez la fonction `st_read` du package sf. Vous rajouterez également la commande suivante au sein de la fonction `options = "ENCODING=WINDOWS-1252"`. Quelles informations apparaissent dans la console ?
+
+
+```{r}
+setwd("/home/onyxia/work/tp_analyse_spatiale")
+getwd()
+commune_francemetro_2021<-st_read("./fonds/commune_francemetro_2021.shp",
+  options = "ENCODING=WINDOWS-1252"
+)
+
+# Renseigne la geometry (Multypolygon)
+# dimension: XY fait référence à un système de coordonnées dans un espace euclidien
+# bbox: désigne les coordonnées du cadre contenant/entourant nos objets spaciaux
+# CRS: désigne le système de projection à travers son code EPSG
+```
+
+2. Faites un résumé/descriptif du contenu de l'objet importé, comme vous le feriez pour un dataframe.
+
+```{r}
+str(commune_francemetro_2021)
+# L'information importante est le fait que notre objet soit un objet sf ET un dataframe
+```
+
+3. Afficher maintenant (à l'aide de la fonction View) les dix premières lignes de la table et regarder la dernière colonne
+
+```{r}
+View(head(commune_francemetro_2021,10))
+# La dernière colonne contient la géométry, c'est à dire les coordonnées géographiques
+```
+
+4.  Afficher le système de projection de la table en utilisant la fonction st_crs.
+
+```{r}
+st_crs(commune_francemetro_2021)
+# La fonction décrit tout un tas d'information sur le système de projection, son libellé et sa mesure (UNIT)
+```
+
+5. Créer une table "communes_Bretagne" ne contenant que les communes bretones. Ne conserver que les colonnes (code, libelle, epc, dep, surf) en utilisant la fonction select() de dplyr. Votre table contient-elle uniquement les 5 variables sélectionnées ?
+
+```{r}
+communes_Bretagne<-commune_francemetro_2021 %>%
+  filter(reg=="53") %>% 
+  select(code, libelle, epc, dep, surf)
+
+# La variable de Geometry qui caractérise l'objet sf, n'a pas été supprimée.
+```
+
+6. Assurez-vous que cette nouvelle table est toujours un objet sf.
+
+```{r}
+str(communes_Bretagne)
+```
+
+7. Appliquer la fonction plot sur votre table. (Hint: l'argument `lwd` vous permet de jouer sur l'épaisseur des lignes)
+
+```{r}
+plot(communes_Bretagne, lwd = 0.1)
+```
+
+
+8. Faire la question précédente en utilisant `st_geometry` dans votre plot
+
+```{r}
+plot(st_geometry(communes_Bretagne), lwd = 0.5)
+```
+
+9. Créer une variable de surface appelée "surf2" en utilisant les fonctions st_area() sur votre variable de geometry. En quelle unité est la variable créée ?
+
+```{r}
+communes_Bretagne<-communes_Bretagne %>% 
+  mutate(surf2=st_area(geometry))
+
+str(communes_Bretagne$surf2)
+# Variable en m²
+```
+
+
+10. Modifier la variable créée pour la convertir en km².
+
+```{r}
+# Cela revient à diviser notre variable par 1000*1000. Une façon plus élégante est d'utiliser le convertisseur d'unités issu du package set_units
+communes_Bretagne<-communes_Bretagne %>% 
+  mutate(surf2 = units::set_units(surf2, km*km))
+
+str(communes_Bretagne$surf2)
+```
+
+
+11. Les variables surf et surf2 sont-elles égales ? Pourquoi selon vous ?
+
+```{r}
+# Plusieurs raisons possibles : 
+# Calcul sur des systèmes de projection différents (ce n'est pas le cas ici)
+# Calcul sur des fonds différents : les fonds n'ont pas les mêmes précisions de contours.
+# On trouve des fonds "simplifiés" des communes et des fonds détaillés (en général de la BDTOPO). Les fonds détaillés sont + précis et donc beaucoup plus lourds. 
+```
+
+12. L'objectif est de créer une table départementale "dept_bretagne" sans doublons. Cette table devra contenir le code departement et la superficie du département. Représenter le nouveau fond sur une carte avec la fonction `plot`
+
+```{r}
+# Avec la fonction summarise
+dept_bretagne2<-communes_Bretagne %>% 
+  group_by(dep) %>% 
+  summarise(surf=sum(surf)) 
+
+plot(st_geometry(dept_bretagne2))
+# Les géométries ont été regroupées pour faire une geometry par département.
+
+```
+
+13. Constituer cette fois un fond départemental en utilisant les fonctions summarise() et st_union(). A la différence de la table précedemment créée, le fond ne contiendra que le code dept et la geometry (aucune variable numérique ne sera utilisée). Faire ensuite un plot de votre table pour vérifier que les geometry ont bien été regroupés par département.
+
+```{r}
+dept_bretagne<-communes_Bretagne %>% 
+  group_by(dep) %>% 
+  summarise(geometry=st_union(geometry))
+
+plot(st_geometry(dept_bretagne), axes=TRUE)
+# c'est la méthode à préconiser pour regrouper des géométries- rien n'interdit de faire un summarise mais on n'a pas toujours une variable numérique à disposition.
+
+```
+
+14. Créer une table "centroid_dept_bretagne" contenant les centroïdes des départements bretons. 
+a. Quel est le type de géometrie associé à ces centroïdes ?
+
+```{r}
+centroid_dept_bret<-st_centroid(dept_bretagne)
+class(centroid_dept_bret$geometry)
+
+# Type point
+```
+
+b. Représenter les départements bretons et leurs centroïdes sur une même carte, avec deux appels à la fonction `plot()` et en ajoutant l'argument `add = TRUE` sur le second appel.
+
+```{r}
+plot(st_geometry(dept_bretagne))
+plot(st_geometry(centroid_dept_bret), add = TRUE)
+```
+
+c. Ajouter le nom du départment dans le fond de centroïdes. La variable aura pour nom `dept_lib`. Plusieurs solutions sont possibles, la plus propre étant d'utiliser une petite table de passage et de la fusionner avec le fond de centroïdes.
+
+```{r}
+dept_lib <- tibble(
+  dep = c("22","29","35","56"),
+  dep_lib = c("Côtes d'Armor","Finistère","Ille-et-Vilaine","Morbihan")
+)
+centroid_dept_bret <- centroid_dept_bret %>%
+  left_join(
+    dept_lib,
+    by = "dep"
+  )
+```
+
+d. Récupérer les coordonnées des centroïdes dans un data.frame appelé `centroid_coords` avec la fonction `st_coordinates`. Observer l'objet obtenu. Ajouter ensuite les colonnes `dep` et `dep_lib` du fond de `centroid_dept_bret` avec la fonction `bind_cols`. Vous ferez attention à ce que `centroid_coords` ne contienne pas de géométrie (Hint: utiliser `st_drop_geometry`).
+
+```{r}
+
+centroid_coords <- st_coordinates(centroid_dept_bret) 
+centroid_coords %>% str() ## On obtient un df avec seulement deux colonnes X et Y
+
+centroid_coords <- centroid_coords %>% 
+  bind_cols(
+    centroid_dept_bret %>% 
+      select(dep, dep_lib) %>%
+      st_drop_geometry()
+  )
+centroid_coords %>% str()
+
+```
+
+d. Représenter les départements, leur centroïde (comme en 14.b) et leur nom (avec la fonction `text`) sur une seule carte.
+
+```{r}
+plot(st_geometry(dept_bretagne))
+plot(st_geometry(centroid_dept_bret), pch = 16, col = "orangered", add = TRUE)
+text(
+  x = centroid_coords$X,
+  y = centroid_coords$Y,
+  labels = centroid_coords$dep_lib,
+  pos = 3,
+  cex = 0.8,
+  col = "orangered"
+)
+```
+
+
+15. A l'aide de la fonction `st_intersects()`, retrouver dans quelle commune se situe le centroïde de chaque département breton. 
+
+```{r}
+commune_centroid_bret <- st_intersects(communes_Bretagne, centroid_dept_bret)
+typeof(commune_centroid_bret)
+# Il s'agit d'une liste de longueur égale au nombre de commune.
+
+# La fonction intersects renvoie une liste contenant autant d'éléments que d'observations 
+# dans notre table communale. Lorsque qu'il y a intersection l'élément est renseigné, vide sinon.
+# On récupère les éléments non vides de notre liste avec la commande suivante
+which(lengths(commune_centroid_bret)>0)
+# Pour avoir les communes concernées, on applique ce vecteur de position à notre fichier de communes.
+commune_centre_dep<-communes_Bretagne[which(lengths(commune_centroid_bret)>0),]
+
+# Equivalent en écriture dplyr 
+commune_centre_dep <- communes_Bretagne %>%
+  filter(lengths(commune_centroid_bret) > 0)
+
+# Une autre façon est d'utiliser les crochets et l'option op=st_intersects
+communes_Bretagne[centroid_dept_bret,,op=st_intersects]
+```
+
+16. Faire la même question avec la fonction st_intersection() puis avec la fonction st_within. Quelles différences voyez-vous avec la fonction st_intersects ?
+
+```{r}
+Q16_intersection <- st_intersection(communes_Bretagne,centroid_dept_bret)
+# La fonction st_intersection nous renvoit directement le résultat attendu (dataframe). Cette fonction est donc beaucoup plus pratique. Cependant, dans le cas de calculs lourds, elle peut être très longue.
+
+# Avec la fonction within, on regarde si un objet (1er paramètre) est contenu dans un autre objet (2e paramètre). L'ordre des paramètre a donc une importance. Cette fonction renvoie encore une liste.
+Q16_within<-st_within(centroid_dept_bret,communes_Bretagne)
+```
+
+17. Calculer la distance séparant les centroïdes des départements et leur chefs-lieux. Les chefs-lieux des départements bretons sont les communes de Saint-Brieuc (22), Quimper (29), Rennes (35) et Vannes (56). Vous utiliserez la fonction `st_distance`.
+
+```{r}
+Q17 <- st_distance(
+  centroid_dept_bret, 
+  communes_Bretagne %>%
+    filter(libelle %in% c("Saint-Brieuc","Quimper","Rennes","Vannes"))
+)
+
+Q17 <- data.frame(Q17)
+rownames(Q17) <- centroid_dept_bret$dep
+colnames(Q17) <- c("Saint-Brieuc","Quimper","Rennes","Vannes")
+```
+
+18. Quelles sont les communes à moins de 20 km (à vol d'oiseau) de chaque centroïde ? 
+
+ a. Utilisez la fonction `st_buffer(x,dist)` pour créer une zone de 20 km autour des centroïdes. Vous ferez attention aux unités.
+
+```{r}
+buffer <- st_buffer(commune_centre_dep, dist = 20000)
+```
+
+ b. Représenter sur une carte la géométrie obtenue avec la fonction `plot`.
+
+```{r}
+
+plot(st_geometry(dept_bretagne))
+plot(st_geometry(centroid_dept_bret),add=TRUE)
+plot(buffer %>% st_geometry(),add=TRUE)
+
+```
+
+  c. Récupérez les communes comprises dans les tampons obtenus au 18.a avec la fonction `st_intersection()`
+
+```{r}
+Q18 <- buffer %>% 
+  rename(code_centroid=code, dep_centroid=dep) %>% 
+  st_intersection(
+    communes_Bretagne %>% select(code_intersect=code, dep_intersect=dep)
+  )
+```
+
+  d. Combien de communes sont concernées par département ?
+
+```{r}
+Q18 %>%
+  st_drop_geometry() %>%
+  filter(dep_centroid==dep_intersect) %>% 
+  group_by(dep_centroid) %>%
+  count()
+```
+
+19.a. Changer le système de projection des communes bretonnes pour le mettre en WGS84 (EPSG=4326), avec la fonction `st_transform`.
+
+```{r}
+communes_Bretagne_wgs84 <- st_transform(communes_Bretagne, 4326)
+```
+
+  b. Représentez le fond ainsi produit
+  
+```{r}
+par(mfrow = c(1,2))
+plot(st_geometry(communes_Bretagne), main = "epsg:2154")
+plot(st_geometry(communes_Bretagne_wgs84), main = "epsg:4326")
+```
+  
+20. Recalculer l'aire des communes pour créer une variable surf3. Que se passe t'il ? 
+
+```{r}
+communes_Bretagne_wgs84 <- communes_Bretagne_wgs84 %>% 
+  mutate(surf3 = st_area(geometry))
+
+st_crs(communes_Bretagne_wgs84)
+
+# L'unité est en degré, le calcul des distances, aires ne peut se faire directement sur d'anciennes versions de sf.
+# avec sf 1.0.6 : le calcul se fait et les valeurs sont proches de surf2 sans être égales
+```
+
+

@@ -1,0 +1,206 @@
+---
+title: "TP cartographie avec R corrigé"
+output: html_document
+---
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE, results='hide',error=TRUE,eval = FALSE)
+```
+
+
+---
+
+
+
+## **OBJECTIFS DU TP:**
+  
+  - Le but de ce TP est de se sensibiliser à la discrétisation de variables, et découvrir des packages de cartographie avec R. Nous verrons notamment l'utilisation du package `mapsf`pour les cartes "statiques" et `leaflet` pour les cartes dynamiques.  
+
+
+Aﬁn d’utiliser une version de R plus récente (et une version du package sf plus récente aussi), vous travaillerez sur le datalab (plateforme du sspcloud, service de l’Insee) : https://datalab.sspcloud.fr. 
+
+Nous travaillerons avec les fonds disponibles sous “U:/Eleves/Cartographie/Fonds_carte”.
+
+**PS : Ce répertoire ne doit pas être votre répertoire de travail !** Il s’agit d’un répertoire où l’on met à disposition des fonds de carte au service de tout le monde. Leur modiﬁcation pénaliserait donc tous ses utilisateurs.
+
+
+---
+
+Commencez par créer un projet pour cette séance de TP, n'oubliez pas de cocher "Create a git repository". Pour ce TP, vous aurez besoin des packages suivants pour le TP :
+
+```{r}
+# Chargement des packages
+# install.packages("mapsf")
+library(dplyr)
+library(sf)
+library(mapsf)
+library(classInt)
+library(leaflet)
+```
+
+### Exercice 1
+
+Le but de cet exercice est de discrétiser une variable continue et d'en observer les différents résultats selon la méthode choisie. 
+
+Vous utiliserez le fond des communes de France metropolitaine sur lequel vous calculerez une variable de densité. Pour la variable de population, vous disposez notamment du fichier "Pop_legales_2019.xlsx" présent dans le dossier "U:/Eleves/Cartographie/Donnees". 
+
+1. Commencez par vous créer votre jeu de données (jointure et création de variable). Attention avant de joindre vos données, il vous faudra d'abord homogénéiser la commune de Paris. Dans un fichier (fond communal), Paris est renseigné sous son code communal (75056). Dans l'autre, Paris est renseigné par arrondissement (75101 à 75120). Vous devrez donc regrouper les arrondissements pour avoir une seule ligne pour Paris. Cette ligne sera renseignée avec le CODGEO 75056.
+
+```{r}
+# Import des donnees 
+# Fond communes France metropolitaine
+communes_fm<- st_read("data/commune_francemetro_2021.shp", options = "ENCODING=WINDOWS-1252") %>% 
+  select(code,libelle,surf)
+# Import des population légales des communes en 2019
+pop_com_2019<-openxlsx::read.xlsx("data/Pop_legales_2019.xlsx")
+# Correction pour la ville de Paris
+pop_com_2019<-pop_com_2019 %>% 
+  mutate(COM=if_else(substr(COM,1,3)=="751","75056",COM)) %>% 
+  group_by(code=COM) %>% 
+  summarise(pop=sum(PMUN19))
+# Jointure
+communes_fm<-communes_fm %>% 
+  left_join(pop_com_2019,
+            by="code") %>% 
+  mutate(densite=pop/surf)
+```
+
+2. Regarder rapidement la distribution de la variable de densite
+
+```{r}
+summary(communes_fm$densite)
+hist(communes_fm$densite)
+
+```
+
+3. On souhaite représenter la variable de densite sous forme d'une carte choroplèthe. Faire cela en utilisant la fonction `plot()`. La variable de densité sera selectionnée par les crochets sur le modèle suivant : `ma_table["ma_variable_continue"]`. Ajouter également l'argument `border=FALSE` pour supprimer les bordures des polygônes.
+
+```{r}
+plot(communes_fm["densite"], border=FALSE)
+ 
+```
+
+4. On se rend compte que la carte est peu informative et qu'il vaut mieux discrétiser notre variable. Représenter le résultat de la discrétisation de la densité de population selon les méthodes des quantiles, jenks et des écarts-types, ainsi que la méthode `pretty`. 
+Vous utiliserez la fonction `plot` en ajoutant l'argument `breaks=` + le nom de la méthode. Vous analyserez les différences entre les différentes cartes. Laquelle retiendriez-vous? Pourquoi?
+
+```{r}
+plot(communes_fm["densite"], breaks="quantile", main="quantile", border = FALSE)
+plot(communes_fm["densite"], breaks="sd", main="sd", border = FALSE)
+plot(communes_fm["densite"], breaks="jenks", main="jenks", border = FALSE)
+plot(communes_fm["densite"], breaks="pretty", main="pretty", border = FALSE)
+```
+
+5. Pour obtenir une classification satisfaisante, il faut pouvoir comparer la distribution de la variable continue avec celle de la variable discrétisée. Le package `classInt` est très utile pour construire et analyser les classes.
+
+a. Discrétiser la variable de densité avec la fonction `classInt::classIntervals` avec la méthode des quantiles (argument `style`) et 5 classes (argument `n`). Vous pourrez vous appuyer du modèle suivant :
+
+```{r}
+objet_decoupe <- classIntervals(
+  ma_table$ma_var_continue,
+  style = "quantile",  
+  n = 5
+)
+```
+
+Analyser ensuite l'objet obtenu. Quelles informations contient-il ? Quelles sont les bornes des intervalles qui ont été construits? 
+
+```{r}
+denspop_quant <- classIntervals(
+  communes_fm$densite,
+  style = "quantile", 
+  n = 5
+)
+str(denspop_quant)
+head(denspop_quant$var)
+denspop_quant$brks 
+```
+
+b. Construire une palette de couleurs avec le code suivant:
+
+```{r}
+pal1 <- RColorBrewer::brewer.pal(n = 5, name = "YlOrRd")
+```
+
+Représenter ensuite l'objet précédent (découpage quantile) avec la fonction `plot`et cette palette de couleur (argument `pal=`). Vous ajouterez l'argument `main` à votre fonction `plot` pour préciser un titre. Analyser le graphique.
+
+```{r}
+plot(
+  denspop_quant,
+  pal = pal1,
+  main = "quantile"
+)
+```
+
+c.Relancer l'analyse pour les méthodes sd, jenks et pretty. 
+
+```{r}
+analyser_discret <- function(method, nb_classes){
+  denspop_c <- classIntervals(
+    communes_fm$densite,
+    style = method, 
+    n = nb_classes
+  )
+  print(denspop_c$brks)
+  plot(
+    denspop_c,
+    pal = pal1,
+    main = method
+  )
+  return(denspop_c)
+}
+# Avec cinq classes:
+all_discret <- sapply(c("quantile", "sd","pretty","jenks"), analyser_discret, nb_classes = 5)
+```
+
+
+```{r}
+# A partir des informations obtenues, on peut définir nos propres intervalles. 
+quantile(communes_fm$densite, probs = seq(0,1,0.1))
+summary(communes_fm$densite)
+#40 = médiane
+#162 = moyenne
+#on reprend certaines bornes de Jenks - en fusionnant les derniers intervalles
+# Un exemple de découpage manuel avec 7 classes
+denspop_man_brks7 <- c(0,40,162,500,1000,4000,8000,27200)
+# Un exemple de découpage manuel avec 5 classes
+denspop_man_brks5 <- c(0,40,162,1000,8000,27200)
+```
+
+d. Finalement, on décide de discrétiser notre variable avec les bornes suivantes : [0;40[,[40;162[,[162;1000[,[1000;8000[ et [8000;27200[. Ajouter la variable discrétisée dans le fond communal. Vous utiliserez la fonction `cut`. Vous ferez attention à l'inclusion des bornes inférieures et à l'exclusion des bornes supérieures.
+
+```{r}
+popcomfm_sf <- communes_fm %>%
+  mutate(
+    densite_c = cut(
+      densite,
+      breaks = denspop_man_brks5,
+      include.lowest = TRUE,
+      right = FALSE,
+      ordered_result = TRUE
+    )
+  )
+```
+
+e. Analyser la distribution de cette variable. Représenter la variable discrétisée sur une carte, en créant préalablement une nouvelle palette de couleurs ayant le bon nombre de classes.
+
+```{r}
+table(popcomfm_sf$densite_c)
+pal2 <- c(
+  RColorBrewer::brewer.pal(
+  n=5,
+  name="Greens"
+  )[4:3],
+  RColorBrewer::brewer.pal(
+  n=5,
+  name="YlOrRd"
+  )[c(2,4:5)]
+)
+plot(
+  popcomfm_sf["densite_c"], 
+  pal=pal2, 
+  border = FALSE,
+  main = "Densité de population",
+  )
+```
+

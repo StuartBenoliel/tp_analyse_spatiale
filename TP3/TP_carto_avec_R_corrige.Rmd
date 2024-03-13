@@ -1,0 +1,733 @@
+---
+title: "TP cartographie avec R corrigé"
+output: html_document
+---
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE, results='hide',error=TRUE,eval = FALSE)
+```
+
+
+---
+
+
+
+## **OBJECTIFS DU TP:**
+  
+  - Le but de ce TP est de se sensibiliser à la discrétisation de variables, et découvrir des packages de cartographie avec R. Nous verrons notamment l'utilisation du package `mapsf`pour les cartes "statiques" et `leaflet` pour les cartes dynamiques.  
+
+
+Aﬁn d’utiliser une version de R plus récente (et une version du package sf plus récente aussi), vous travaillerez sur le datalab (plateforme du sspcloud, service de l’Insee) : https://datalab.sspcloud.fr. 
+
+Nous travaillerons avec les fonds disponibles sous “U:/Eleves/Cartographie/Fonds_carte”.
+
+**PS : Ce répertoire ne doit pas être votre répertoire de travail !** Il s’agit d’un répertoire où l’on met à disposition des fonds de carte au service de tout le monde. Leur modiﬁcation pénaliserait donc tous ses utilisateurs.
+
+
+---
+
+Commencez par créer un projet pour cette séance de TP, n'oubliez pas de cocher "Create a git repository". Pour ce TP, vous aurez besoin des packages suivants pour le TP :
+
+```{r}
+# Chargement des packages
+# install.packages("mapsf")
+library(dplyr)
+library(sf)
+library(mapsf)
+library(classInt)
+library(leaflet)
+```
+
+### Exercice 1
+
+Le but de cet exercice est de discrétiser une variable continue et d'en observer les différents résultats selon la méthode choisie. 
+
+Vous utiliserez le fond des communes de France metropolitaine sur lequel vous calculerez une variable de densité. Pour la variable de population, vous disposez notamment du fichier "Pop_legales_2019.xlsx" présent dans le dossier "U:/Eleves/Cartographie/Donnees". 
+
+1. Commencez par vous créer votre jeu de données (jointure et création de variable). Attention avant de joindre vos données, il vous faudra d'abord homogénéiser la commune de Paris. Dans un fichier (fond communal), Paris est renseigné sous son code communal (75056). Dans l'autre, Paris est renseigné par arrondissement (75101 à 75120). Vous devrez donc regrouper les arrondissements pour avoir une seule ligne pour Paris. Cette ligne sera renseignée avec le CODGEO 75056.
+
+```{r}
+# Import des donnees 
+# Fond communes France metropolitaine
+communes_fm<- st_read("data/commune_francemetro_2021.shp", options = "ENCODING=WINDOWS-1252") %>% 
+  select(code,libelle,surf)
+# Import des population légales des communes en 2019
+pop_com_2019<-openxlsx::read.xlsx("data/Pop_legales_2019.xlsx")
+# Correction pour la ville de Paris
+pop_com_2019<-pop_com_2019 %>% 
+  mutate(COM=if_else(substr(COM,1,3)=="751","75056",COM)) %>% 
+  group_by(code=COM) %>% 
+  summarise(pop=sum(PMUN19))
+# Jointure
+communes_fm<-communes_fm %>% 
+  left_join(pop_com_2019,
+            by="code") %>% 
+  mutate(densite=pop/surf)
+```
+
+2. Regarder rapidement la distribution de la variable de densite
+
+```{r}
+summary(communes_fm$densite)
+hist(communes_fm$densite)
+#Une très grande majorité de communes avec une faible densité
+# Trois quarts des communes ont moins de 95 habitants au km2
+```
+
+3. On souhaite représenter la variable de densite sous forme d'une carte choroplèthe. Faire cela en utilisant la fonction `plot()`. La variable de densité sera selectionnée par les crochets sur le modèle suivant : `ma_table["ma_variable_continue"]`. Ajouter également l'argument `border=FALSE` pour supprimer les bordures des polygônes.
+
+```{r}
+plot(communes_fm["densite"], border=FALSE)
+ 
+# Une représentation réalisée directement sur une variable continue peut être pertinente quand le nombre d'observations est très grand et quand la distribution est suffisamment équilibrée. 
+# Or, la densité de population des communes en France métropolitaine est une variable très déséquilibrée, avec une très grande majorité de communes en-dessous de 100 habitants/km², une moyenne à 162 hab/km² et quelques communes très denses. Ainsi, la carte construite est peu informative.
+```
+
+4. On se rend compte que la carte est peu informative et qu'il vaut mieux discrétiser notre variable. Représenter le résultat de la discrétisation de la densité de population selon les méthodes des quantiles, jenks et des écarts-types, ainsi que la méthode `pretty`. 
+Vous utiliserez la fonction `plot` en ajoutant l'argument `breaks=` + le nom de la méthode. Vous analyserez les différences entre les différentes cartes. Laquelle retiendriez-vous? Pourquoi?
+
+```{r}
+plot(communes_fm["densite"], breaks="quantile", main="quantile", border = FALSE)
+plot(communes_fm["densite"], breaks="sd", main="sd", border = FALSE)
+plot(communes_fm["densite"], breaks="jenks", main="jenks", border = FALSE)
+plot(communes_fm["densite"], breaks="pretty", main="pretty", border = FALSE)
+# La méthode des écarts-types n'est pas adaptée aux données. La carte n'est pas très informative même si les grandes agglomérations commencent à apparaître. La méthode pretty est clairement inefficace pour fournir une carte informative. Les méthodes quantile et jenks semblent plus adaptées pour révéler la structuration du territoire entre agglomérations avec de fortes densités et les zones les plus éloignées de ces centres urbains. Néanmoins, on aimerait peut-être une classification intermédiaire entre ces deux méthodes. En effet, Jenks construit une classe de faible densité très nombreuse et la méthode des quantiles semble rassembler un peu trop de communes dans les classes les plus denses.
+```
+
+5. Pour obtenir une classification satisfaisante, il faut pouvoir comparer la distribution de la variable continue avec celle de la variable discrétisée. Le package `classInt` est très utile pour construire et analyser les classes.
+
+a. Discrétiser la variable de densité avec la fonction `classInt::classIntervals` avec la méthode des quantiles (argument `style`) et 5 classes (argument `n`). Vous pourrez vous appuyer du modèle suivant :
+
+```{r}
+objet_decoupe <- classIntervals(
+  ma_table$ma_var_continue,
+  style = "quantile",  
+  n = 5
+)
+```
+
+Analyser ensuite l'objet obtenu. Quelles informations contient-il ? Quelles sont les bornes des intervalles qui ont été construits? 
+
+```{r}
+denspop_quant <- classIntervals(
+  communes_fm$densite,
+  style = "quantile", 
+  n = 5
+)
+str(denspop_quant)
+head(denspop_quant$var) # variable numérique de départ
+denspop_quant$brks # bornes des intervalles construits
+# L'objet contient un sous-objet `var`, variable numérique de départ, et le sous-objet `brks` qui contient les bornes des intervalles construits. Ici `brks` a six valeurs, permettant de décrire les 5 intervalles demandés.
+```
+
+b. Construire une palette de couleurs avec le code suivant:
+
+```{r}
+pal1 <- RColorBrewer::brewer.pal(n = 5, name = "YlOrRd")
+```
+
+Représenter ensuite l'objet précédent (découpage quantile) avec la fonction `plot`et cette palette de couleur (argument `pal=`). Vous ajouterez l'argument `main` à votre fonction `plot` pour préciser un titre. Analyser le graphique.
+
+```{r}
+plot(
+  denspop_quant,
+  pal = pal1,
+  main = "quantile"
+)
+```
+
+c.Relancer l'analyse pour les méthodes sd, jenks et pretty. 
+
+```{r}
+analyser_discret <- function(method, nb_classes){
+  denspop_c <- classIntervals(
+    communes_fm$densite,
+    style = method, 
+    n = nb_classes
+  )
+  print(denspop_c$brks)
+  plot(
+    denspop_c,
+    pal = pal1,
+    main = method
+  )
+  return(denspop_c)
+}
+# Avec cinq classes:
+all_discret <- sapply(c("quantile", "sd","pretty","jenks"), analyser_discret, nb_classes = 5)
+```
+
+
+```{r}
+# A partir des informations obtenues, on peut définir nos propres intervalles. 
+quantile(communes_fm$densite, probs = seq(0,1,0.1))
+summary(communes_fm$densite)
+#40 = médiane
+#162 = moyenne
+#on reprend certaines bornes de Jenks - en fusionnant les derniers intervalles
+# Un exemple de découpage manuel avec 7 classes
+denspop_man_brks7 <- c(0,40,162,500,1000,4000,8000,27200)
+# Un exemple de découpage manuel avec 5 classes
+denspop_man_brks5 <- c(0,40,162,1000,8000,27200)
+```
+
+d. Finalement, on décide de discrétiser notre variable avec les bornes suivantes : [0;40[,[40;162[,[162;1000[,[1000;8000[ et [8000;27200[. Ajouter la variable discrétisée dans le fond communal. Vous utiliserez la fonction `cut`. Vous ferez attention à l'inclusion des bornes inférieures et à l'exclusion des bornes supérieures.
+
+```{r}
+popcomfm_sf <- communes_fm %>%
+  mutate(
+    densite_c = cut(
+      densite,
+      breaks = denspop_man_brks5,
+      include.lowest = TRUE,
+      right = FALSE,
+      ordered_result = TRUE
+    )
+  )
+```
+
+e. Analyser la distribution de cette variable. Représenter la variable discrétisée sur une carte, en créant préalablement une nouvelle palette de couleurs ayant le bon nombre de classes.
+
+```{r}
+table(popcomfm_sf$densite_c)
+pal2 <- c(
+  RColorBrewer::brewer.pal(
+  n=5,
+  name="Greens"
+  )[4:3],
+  RColorBrewer::brewer.pal(
+  n=5,
+  name="YlOrRd"
+  )[c(2,4:5)]
+)
+plot(
+  popcomfm_sf["densite_c"], 
+  pal=pal2, 
+  border = FALSE,
+  main = "Densité de population",
+  )
+```
+
+### Exercice 2
+
+Représenter sous forme de carte le taux de pauvreté par département. Vous utiliserez le package `mapsf`. Vous trouverez de la documentation sur ce package [ici](https://rgeomatic.hypotheses.org/2077). Vous utiliserez le fond "dep_francemetro_2021" ainsi que le fichier "Taux_pauvrete"Taux_pauvrete_dept_2021.xlsx" présent dans le dossier "U:/Eleves/Cartographie/Donnees". Pour l'import de ce fichier, vous pouvez utiliser la fonction `openxlsx::read.xlsx()`.
+
+1. Dans un premier temps, vous pourrez essayer de faire 3 cartes basiques : une en découpant la variables d'intérêt selon la méthode de Fisher (breaks="fisher"), une autre avec des classes de même amplitude ("equal") et enfin selon la méthode des quantiles ("quantile").
+
+```{r}
+# Chargement des packages
+library(sf)
+library(dplyr)
+library(mapsf)
+library(openxlsx)
+# Import des donnees
+dep_francemetro_2021<-st_read("data/dep_francemetro_2021.shp",
+  options = "ENCODING=WINDOWS-1252")
+tx_pauvrete<-read.xlsx("data/Taux_pauvrete_2021.xlsx")
+# Import du fond de la mer (optionnel)
+mer<-st_read("data/merf_2021.shp")
+# Résumé des jeux de données
+str(dep_francemetro_2021)
+str(tx_pauvrete)
+# Jointure pour rajouter le taux de pauvreté à notre fond départemental
+dep_francemetro_2021_pauv<-dep_francemetro_2021 %>% 
+  left_join(tx_pauvrete %>% select(-Dept),
+            by=c("code"="Code"))
+# Représentation du taux de pauvreté avec la package mapsf
+# La variable est de type ratio, il s'agit donc d'une carte choroplèthe.
+# On peut déjà avoir une belle carte de manière très simple :
+# Methode de Fisher
+mf_map(x = dep_francemetro_2021_pauv, 
+       var = "Tx_pauvrete", 
+       type = "choro",
+       nbreaks = 4,
+       breaks= "jenks"
+       )
+# Methode des classes de même amplitude
+mf_map(x = dep_francemetro_2021_pauv, 
+       var = "Tx_pauvrete", 
+       type = "choro",
+       nbreaks = 4,
+       breaks= "equal"
+       )
+# Methode des quantiles
+mf_map(x = dep_francemetro_2021_pauv, 
+       var = "Tx_pauvrete", 
+       type = "choro",
+       nbreaks = 4,
+       breaks= "quantile"
+       )
+```
+
+
+2. Dans un 2e temps, vous ferez un découpages manuel avec les seuils suivants : 0, 13, 17, 25, max(Tx_pauvrete). La carte contiendra également un zoom sur Paris et sa petite couronne (departements 75, 92, 93, 94). 
+
+```{r}
+# Réalisation d'une carte de quasi-diffusion, 
+# L'occasion de regarder les différentes options
+# Creation d'un vecteur de codes couleurs (découpage de la couleur bleu "Mint")
+# On applique la fonction rev pour inverser l'ordre des codes :
+# on souhaite avoir du plus clair au plus foncé
+couleur<-rev(mf_get_pal(4,"Mint"))
+mf_map(x = dep_francemetro_2021_pauv, 
+       # Variable à représenter
+       var = "Tx_pauvrete", 
+       # Carte choroplethe
+       type = "choro",
+       # Seuils de découpage de notre variable
+       breaks= c(0,13,17,25,max(dep_francemetro_2021_pauv$Tx_pauvrete)),
+       pal = couleur,
+       # leg_val_rnd = 0
+       # On ne fait pas apparaitre la legende, on utilisera la fonction
+       # mf_legend() pour personnaliser les libelles
+       leg_pos = NA
+)
+# Creation d'un encadre pour notre carte (ouverture)
+mf_inset_on(x = dep_francemetro_2021_pauv , pos = "topright", 
+            cex = .2)
+# Pour centrer/zoomer sur notre encadre sur notre territoire
+# (sinon Paris et sa couronne restent très petits)
+mf_init(dep_francemetro_2021_pauv %>%
+          filter(code %in% c("75","92","93","94")))
+# On recrée la carte choroplethe sur Paris et sa couronne
+mf_map(dep_francemetro_2021_pauv %>% 
+         filter(code %in% c("75","92","93","94")), 
+       var = "Tx_pauvrete", 
+       type = "choro",
+       breaks= c(0,13,17,25,max(dep_francemetro_2021_pauv$Tx_pauvrete)),
+       # Ne pas faire apparaître la legende de l'encadre
+       leg_pos = NA,
+       # Ne pas oublier le add=TRUE pour superposer l'encadre à notre carte
+       add = TRUE)
+# Rajout des codes départements
+mf_label(dep_francemetro_2021_pauv %>% 
+           filter(code %in% c("75","92","93","94")),
+         var = "code", 
+         col = "black")
+# Fin de l'encadre (fermeture)
+mf_inset_off()
+# Rajout d'une legende
+mf_legend(
+  type="choro",
+  title = "Taux de pauvreté",
+  # Creation de labels personnalisés
+  # On est oblige de mettre une modalite fictive (ici "") pour avoir une tranche
+  val=c("","Moins de 13","De 13 à moins de 17","De 17 à moins de 25","25 ou plus"),
+  pal=couleur,
+  pos = "left"
+)
+# Si l'on veut rajouter la mer
+mf_map(mer, add=TRUE)
+mf_layout(title = "Taux de pauvreté par département en 2018",
+          credits = "Source : Insee")
+```
+
+3. Sauvegarder le jeu de données ayant servi à faire la carte. Pour cela, vous utilisez la fonction `sf::st_write`. Votre sauvegarde se fera sous le format gpkg (appelé geopackage) sous le nom "dept_tx_pauvrete_2018.gpkg". Ce format regroupe à lui seul les 4 extensions usuelles (shp, shx, dbf, prj).  
+
+
+```{r}
+st_write(dep_francemetro_2021_pauv,"dept_tx_pauvrete_2018.gpkg")
+```
+
+
+### Exercice 3
+
+Dans la poursuite de la découverte de `mapsf`, réaliser une carte choroplèthe (sur une variable de densite) avec ronds proportionnels (sur une variable de population). Pour cela, vous utiliserez le fond des regions de France metropolitaine sur lequel vous calculerez une variable de densité. Pour la variable de population, vous disposez notamment du fichier "pop_region_2019.xlsx" présent dans le dossier "U:/Eleves/Cartographie/Donnees". La carte se fera avec l'option `type="prop_choro"` de la fonction de mf_map.
+
+```{r}
+# Import du fond regional
+region<-st_read("data/reg_francemetro_2021.shp")
+# Import des donnees de population
+pop_reg<-openxlsx::read.xlsx("data/pop_region_2019.xlsx")
+# Import du fond de la mer (optionnel)
+mer<-st_read("data/merf_2021.shp")
+# On fait maintenant la jointure avec notre fond
+region_pop<-region %>% 
+  left_join(pop_reg, by=c("code"="reg")) %>% 
+  mutate(densite=pop/surf)
+# Creation de la carte
+# Représentation du fond de la carte
+mf_map(region_pop)
+mf_map(mer, add=TRUE, col = "darkslategray3")
+# Superposition des ronds proportionnels
+mf_map(region_pop,
+       var = c("pop", "densite"),
+       nbreaks = 3,
+       breaks="fisher",
+       # Pour les options, il faut renseigner un vecteur à 2 éléments :
+       # 1 pour la representation, 1 pour les ronds prop
+       leg_val_rnd = c(-2,0),
+       leg_title =c("Population", "Nombre d'habitants au km²"),
+       type = "prop_choro")
+mf_layout(title = "Densité et population des régions françaises en 2018",
+          credits = "Source : Insee")
+```
+
+### Exercice 4
+
+1.a.Importer le fond des communes de France métropolitaine `commune_francemetro_2021.shp` en utilisant l'argument `options = "ENCODING=WINDOWS-1252"`
+
+```{r}
+comfm_sf <- st_read(
+  "data/commune_francemetro_2021.shp",
+  options = "ENCODING=WINDOWS-1252"
+)
+str(comfm_sf)
+```
+
+
+b.Importer le fichier `bpe20_sport_loisir_xy.csv` (séparateur de colonnes `;` et séparateur des décimales `.`) et prenez connaissance des données. Il s'agit de la liste géolocalisée des équipements de sports et loisirs en France. Une ligne est donc un équipement. Pour la géolocalisation des équipements, le système de projection utilisé est le Lambert-93 (epsg=2154) pour la Métropole. Le séparateur de colonnes est le `;`. Le fichier est issu du site de l'Insee: [https://www.insee.fr/fr/statistiques/3568638?sommaire=3568656](https://www.insee.fr/fr/statistiques/3568638?sommaire=3568656). Vous y trouverez la documentation nécessaire pour comprendre les données. Repérer notamment les variables renseignant les coordonnées géographiques des équipements, ainsi que la variable indiquant le type d'équipement.
+
+```{r import_data}
+#Utiliser l'argument n_max=1000 dans un premier temps pour vérifier le bon chargement des données puis le retirer
+bpesl_tb <- read.csv(
+  "data/bpe20_sport_loisir_xy.csv",
+  sep = ";",
+  dec = "."
+)
+str(bpesl_tb)
+head(bpesl_tb)
+```
+
+2.Charger un fond OpenStreetMap centré sur la France métropolitaine. Pour cela, repérer les coordonnées (longitude/latitude) d'un point situé approximativement au centre de la France sur [https://www.openstreetmap.org/](https://www.openstreetmap.org/) (un clic-droit + afficher l'adresse). Ensuite utiliser le code suivant : `leaflet() %>% setView(lng = longitude, lat = latitude, zoom = 5) %>% addTiles()` où longitude et latitude correspondent aux coordonnées récupérées.
+
+```{r}
+map <- leaflet() %>% 
+  setView(lng = 2.6, lat = 47.2, zoom = 5) %>%
+  addTiles()
+map
+```
+
+3.Nous souhaitons positionner sur la carte l'emplacement des bowlings (`TYPEQU == "F119"`) sur la carte.
+
+
+a.Récupérer de la base d'équipements les bowlings en France Métropolitaine (`REG > 10`) et les stocker dans une table à part. Retirer également les bowlings dont les coordonnées sont maquantes.
+
+```{r}
+bowlings <- bpesl_tb %>%
+  filter(TYPEQU == "F119" & REG > 10 & !(is.na(LAMBERT_X)) & !(is.na(LAMBERT_Y))) 
+```
+
+
+b.Les cartes réalisées avec `leaflet` nécessitent d'utiliser des coordonnées dans le système de projection `WGS84 - epsg = 4326`.
+Transformer la base de bowlings en un objet sf avec la fonction `st_as_sf` et en utilisant l'argument `coords` pour préciser le nom des variables de coordonnées ainsi que l'argument `crs = 2154` (système de projection : RGF93). Ensuite, reprojeter le fond obtenu dans le système de projection adéquat avec la fonction `st_transform(crs = 4326)`.
+
+```{r}
+bowlings_sf <- bowlings  %>%
+  st_as_sf(coords = c("LAMBERT_X", "LAMBERT_Y"), crs = 2154) %>%
+  st_transform(crs = 4326)
+str(bowlings_sf)
+st_crs(bowlings_sf)
+```
+
+c.Ajouter un marqueur localisant chacun des bowlings sur la carte interactive précédemment initialisée. Utiliser la fonction `addMarkers` et l'argument `data`.
+
+
+```{r}
+map %>%
+  addMarkers(
+    data = bowlings_sf
+  )
+```
+
+d.Il est posible d'ajouter un `popup` qui affiche une information complémentaire quand on clique sur un marqueur. Reprendre le code précédent et ajouter l'argument `popup=~DEPCOM` pour afficher le code de la commune dans laquelle le bowling est installé.
+
+```{r}
+map %>%
+  addMarkers(
+    data = bowlings_sf,
+    popup = ~DEPCOM
+  )
+```
+
+**Une carte choroplèthe interactive**
+
+4.a.Initialiser un fond de carte interactif centré sur le département de votre choix. AdaPter la démarche vue en 2.
+
+```{r}
+# Les landes
+map2 <- leaflet() %>%
+  setView(lng=-0.5,lat=44,zoom=8) %>%
+  addTiles()
+map2
+```
+
+b.Importer le fichier `base-cc-evol-struct-pop-2018_echantillon.csv`. Restreindre le tableau aux communes du département que vous aurez choisi et aux variables `CODGEO`, `P18_POP` (population communale) et `P18_POP0014` (population de moins de 14 ans). Calculer la part des moins de 14 ans dans la population communale.
+
+
+```{r import_data2}
+popcom_tb <- read.csv(
+  "data/base-cc-evol-struct-pop-2018_echantillon.csv", 
+  sep = ",",
+  dec = "."
+) %>%
+  filter(stringr::str_detect(CODGEO, "^40")) %>%
+  select(CODGEO, P18_POP, P18_POP0014) %>%
+  mutate(PART18_POP0014 = P18_POP0014/P18_POP*100)
+```
+
+
+c.Fusionner le fond communal et le tableau que vous venez de constituer. Assurez-vous que le fond communal soit restreint aux communes du département choisi. Changer le système de projection pour qu'il soit de type WGS84.
+
+```{r}
+popcomd40_sf <- comfm_sf %>%
+  right_join(
+    popcom_tb, by = c("code" = "CODGEO")
+  ) %>%
+  st_transform(crs = 4326)
+```
+
+d.Ajouter à la carte interactive initialisée en a. les polygônes du fond communal du département choisi. Utiliser la fonction `addPolygons` en utilisant les arguments `data` (le fond communal), `weight` (pour préciser l'épaisseur des bordures), `color` (couleur des bordures des polygônes) et `fill=NA` (absence de couleur de remplissage).
+
+
+```{r}
+map2 %>%
+  addPolygons(
+    data = popcomd40_sf,
+    weight = 0.5, #width of the borders
+    color = "purple",
+    fill = NA
+  )
+```
+
+e.On souhaite ajouter une analyse thématique en représentant la part de moins de 14 ans dans chaque commune. 
+
+Pour cela, il faut préalablement discrétiser la variable étudiée. On utilisera une discrétisation par la méthode des quantiles avec la fonction `colorQuantile`. Ses arguments sont :
+
+- `palette` : nom d'une palette, apr exemple "YlOrRd". Une liste de palettes disponibles peut s'obtenir avec `RColorBrewer::display.brewer.all()`.
+- `domain` : variable numérique à discrétiser.
+- `n` : nombre de classes
+
+Créer une palette avec la fonction `colorQuantile` en utilisant le modèle suivant :
+
+```{r}
+pal <- colorQuantile(
+  "Blues", 
+  domain = ma_table$var_a_discretiser, 
+  n = 5
+)
+```
+
+
+```{r}
+pal <- colorQuantile(
+  "Blues", 
+  domain = popcomd40_sf$PART18_POP0014, 
+  n = 5
+)
+```
+
+f.Ajouter l'analyse thématique à la carte interactive en ajoutant l'argument `fillColor` dans la fonction `addPolygons` utilisée en d. Retirer l'argument `fill` et ajouter l'argument `fillOpacity` pour gérer l'opacité de l'analyse thématique (1=opaque, 0=transparent).
+
+```{r}
+map_choro <- map2 %>%
+  addPolygons(
+    data = popcomd40_sf,
+    weight = 0.5, #width of the borders
+    color = "purple",
+    fillOpacity = 0.5,
+    fillColor = ~pal(PART18_POP0014)
+  )
+map_choro
+```
+
+g.Ajouter la légende de l'analyse avec la fonction `addLegend`.
+
+```{r}
+map_choro_leg <- map_choro %>%
+  addLegend(
+    pal = pal,
+    values = popcomd40_sf$PART18_POP0014
+  )
+map_choro_leg
+```
+
+h.On souhaite ajouter un popup à chaque commune affichant :
+
+- le nom de la commune (variable `libelle`);
+- la population de la commune (variable `P18_POP`);
+- la part de la population de moins de 14 ans.
+
+Pour cela, créer une variable `contenu_popup` dans le fond communal qui concatène les différentes informations ci-dessus. Pour ceux qui connaissent le html, on peut utiliser des balises html pour la mise en forme du popup sur le modèle suivant :
+
+```{r}
+ma_table$contenu_popup <- paste0(
+      "<b>",ma_table$libelle,"</b>",
+      "<br>",
+      "Population: ",
+      format(ma_table$population,big.mark = " "),
+      "<br>",
+      "Part moins de 15 ans: ",
+      round(ma_table$part_moins_15ans,1),
+      "%"
+      )
+```
+
+```{r}
+popcomd40_sf$contenu_popup <- paste0(
+      "<b>",popcomd40_sf$libelle,"</b>",
+      "<br>",
+      "Population: ",
+      format(popcomd40_sf$P18_POP,big.mark = " "),
+      "<br>",
+      "Part moins de 15 ans: ",
+      round(popcomd40_sf$PART18_POP0014,1),
+      "%"
+      )
+```
+
+Ajouter ensuite à la fonction `addPolygons` l'argument `popup = ~contenu_pop`.
+
+```{r}
+map_choro_popup <- map2 %>%
+  addPolygons(
+    data = popcomd40_sf,
+    weight = 0.5, #width of the borders
+    color = "purple",
+    fillOpacity = 0.5,
+    fillColor = ~pal(PART18_POP0014),
+    popup = ~contenu_popup
+  ) %>%
+  addLegend(
+    pal = pal,
+    values = popcomd40_sf$PART18_POP0014
+  )
+map_choro_popup
+```
+
+i.On souhaite enfin ajouter l'emplacement des bassins de natation. 
+Construire une base des équipements de natation (`TYPEQU == "F101"`) situés dans le département choisi. Transformer ce dataframe en un objet sf comme en 3.b
+
+```{r}
+natation_d40 <- bpesl_tb %>%
+  filter(TYPEQU == "F101" & DEP == "40" & !(is.na(LAMBERT_X)) & !(is.na(LAMBERT_Y)))
+```
+
+```{r}
+natation_sf <- natation_d40  %>%
+  st_as_sf(coords = c("LAMBERT_X", "LAMBERT_Y"), crs = 2154) %>%
+  st_transform(crs = 4326)
+str(natation_sf)
+st_crs(natation_sf)
+```
+
+Enfin, ajouter les emplacements des bassins de natation sur la carte interactive communale. Inspirez-vous de 4.c
+
+```{r}
+map_choro_popup %>%
+  addMarkers(
+    data = natation_sf,
+    label = ~as.character(DEPCOM)
+  )
+```
+
+j.La dernière étape consiste à ajouter un contrôle des couches à faire apparaître.
+
+Reprendre l'ensemble du code de fabrication de la carte interactive pour constituer un seul bloc de code.
+
+Ajouter l'argument `group=` avec un nom identifiant la couche dans chaque fonction correspondant à une nouvelle couche.
+
+Ajouter une dernière instruction à l'enchaînement en utilisant la fonction `addLayersControl()` et l'argument `overlayGroups` en y listant les différents groupes de couches.
+
+```{r}
+leaflet() %>%
+  setView(lng=-0.5,lat=44,zoom=8) %>%
+  addTiles() %>%
+  addPolygons(
+    data = popcomd40_sf,
+    weight = 0.5, #width of the borders
+    color = "purple",
+    fill = NA,
+    group = "limites communales"
+  ) %>%
+  addPolygons(
+    data = popcomd40_sf,
+    weight = 0.5, #width of the borders
+    color = NA,
+    fillOpacity = 0.5,
+    fillColor = ~pal(PART18_POP0014),
+    popup = ~contenu_popup,
+    group = "Analyse thématique"
+  ) %>%
+  addLegend(
+    pal = pal,
+    values = popcomd40_sf$PART18_POP0014
+  ) %>%
+  addMarkers(
+    data = natation_sf,
+    label = ~as.character(DEPCOM),
+    group = "Bassins de natation"
+  ) %>%
+  addLayersControl(
+    overlayGroups = c("limites communales", "Analyse thématique", "Bassins de natation")
+  )
+```
+
+
+#### Bonus: Faire une carte interactive plus simplement avec le package `mapview`
+
+L'idée est de réaliser un carte équivalente à celle réalisée dans la question précédente. 
+
+```{r}
+library(mapview)
+```
+
+
+On crée nos classes à partir d'une discrétisation de la part de moins de 14 ans par la méthode des quantiles (ici des quintiles).
+
+```{r}
+qt_part <- quantile(
+  popcomd40_sf$PART18_POP0014, probs = seq(0,1,.2)
+)
+qt_part_arr <- c(
+  floor(qt_part[1]*10)/10,
+  round(qt_part[2:5], 1),
+  ceiling(qt_part[6]*10)/10
+)
+```
+
+On réalise ensuite la carte avec `mapview`, en construisant dans un premier temps la carte choroplèthe des parts de moins de 14 ans par communes (1er appel à la fonction `mapview()`), et en y ajoutant (comme dans la logique `ggplot`) les autres couches nécessaires (ici: les bassins de natations). 
+On peut se permettre de facilement représenter le type de bassin (couvert ou non couvert) en plus de leur localisation.
+
+
+```{r}
+mapview(
+  # fond de polygône
+  popcomd40_sf, 
+  # variable représentée (possible d'en mettre plusieurs)
+  z = c("PART18_POP0014"),
+  # Les bornes des intervalles pour des classes manuelle
+  at = qt_part_arr,
+  # transparence du remplissage des polygônes
+  alpha.regions = 0.35,
+  # Nom de la couche
+  layer.name = "Moins de 14 ans (en %)",
+  #Info affichée quand on survol le polygône => ici = libellé de la commune
+  label = "libelle",
+  # Infos affichées quand on clique sur un polygône
+  popup = leafpop::popupTable(popcomd40_sf, z = c("code","libelle","P18_POP", "PART18_POP0014"))
+) +
+  mapview(
+    # sf composé de points 
+    natation_sf %>%
+      # on en profite pour transformer la variable COUVERT en facteur
+      mutate(
+        COUVERT = factor(
+          COUVERT, 
+          levels = 0:1, 
+          labels = c("Non couverte","Couverte")
+        )
+      ), 
+    z = "COUVERT",
+    # les couleurs des points selon la catégorie de la variable COUVERT
+    col.regions = c("steelblue", "coral"),
+    # transparences
+    alpha = 0.8,
+    alpha.regions = 0.7,
+    # Nom de la couche
+    layer.name = "Piscines",
+    # Popup: affichage quand on clique sur un point
+    popup = leafpop::popupTable(natation_sf, z = "NB_AIREJEU")
+  )
+```

@@ -1,0 +1,282 @@
+---
+title: "TP PostGIS avec R"
+output: html_document
+
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(eval = FALSE)
+```
+
+
+## **OBJECTIFS DU TP:**
+
+- Le but de ce TP est de découvrir l'utilisation de PostGis (extension PostGreSQL) pour la manipulation d'objets spaciaux. 
+
+
+Aﬁn que tout le monde ait le même environnement de travail, vous travaillerez sur le datalab (plateforme du sspcloud, service de l’Insee) : https://datalab.sspcloud.fr.
+
+
+Les données seront directement téléchargées depuis votre programme R. 
+
+
+
+---
+
+
+
+### Exercice 1 - Création d'une BDD PostGre avec extension PostGIS
+
+0. Comme pour chaque séance, commencer par créer un projet. Déposer ensuite au sein de votre projet les programmes connexion_db.R et create_db.R
+
+1. Au sein du datalab, vous allez créer un service PostGre avec extension PostGIS afin d'y stocker ultérieurement vos données. Pour cela, une fois connecté à la plateforme du datalab : aller dans Mes Services/Nouveau Service/Onglet Bases de données/Lancer Posgresql/onglet Configuration Postgresql/onglet Extensions/cocher PostGIS puis Lancer le service.
+
+2. Au sein du programme connexion_db.R, modifier les variables "name_database", "user_name", "password", "url", "port" pour les adapter au service que vous venez de créer. Les informations nécessaire sà la connexion au serveur PostGre se trouvent sur le bouton README du service.
+
+3. Faire tourner tout le programme create_db.R. Pour que le programme fonctionne il vous faudra probablement modifier le chemin de la fonction source(). Après avoir bien fait correctement tourner le programme, vider votre environnement avec la commande `rm(list = ls())` 
+
+
+### Exercice 2 - Requêtes sur serveur PostGre
+
+Le début de l'exercice utilise le package DBI. Vous pouvez trouver de la documentation sur ce package [ici](https://dbi.r-dbi.org/)
+
+1. Connectez-vous au serveur postgre en utilisant la syntaxe suivante. Quelles sont les tables présentes sur le serveur ?
+```{r}
+library(DBI)
+source(file = "pgms/connexion_db.R")
+conn<-connecter()
+DBI::dbListTables(conn)
+```
+
+2. Afficher les variables présentes dans la table "popnaiss_com". Pour cela, utilisez la syntaxe suivante :
+```{r}
+DBI::dbListFields(conn,"popnaiss_com")
+```
+
+
+3. Créer une copie de la table popnaiss_com qui sera stockée dans votre environnement. La requête SQL est la suivante `'SELECT * FROM popnaiss_com`. Utiliser la fonction `dbSendQuery()` en n'oubliant pas l'objet de connexion (objet "conn"). Quelle est la nature de l'objet retourné ?
+
+
+4. Faire la même question que précedemment en utilisant cette fois la fonction `dbGetQuery()`. Quelle différence observez-vous ?
+
+
+5. En utilisant à nouveau une requête SQL (donc sans travailler sur la copie), afficher l'ensemble des informations concernant la ville de Rennes (codgeo = "35238") pour la table popnaiss_com. Indication : ajouter l'instruction WHERE à la requête SQL précédente. Vous pouvez trouver de la [documentation ici](https://www.w3schools.com/sql/sql_where.asp) 
+
+
+6. On souhaite récupérer les informations relatives aux équipements (table bpe_metro) et aux naissances pour la ville de Bruz (table popnaiss_com). Pour cela, faites une jointure (en langage SQL) sur la commune de Bruz (CODGEO = "35047"). Vous utiliserez l'instruction INNER JOIN en terminant avec l'instruction WHERE. [Indication ici](https://www.w3schools.com/sql/sql_join_inner.asp). La clé de jointure est la variable codgeo dans popnaiss_com et depcom dans bpe21_metro. 
+
+
+7. Le package `dbplyr` permet de travailler sur des BDD de données de type SQL sans avoir à passer par la requête SQL (peut être utile quand on a complètement oublié ses cours). Vous trouverez de la [documentation ici](https://dbplyr.tidyverse.org/).
+
+a. Lancez le code suivant. Que fait la fonction `show_query()`? A quoi sert la fonction `collect()` ?
+
+```{r}
+library(dplyr)
+library(dbplyr)
+
+# Connexion à la table popnaiss
+popnaiss<-tbl(conn,"popnaiss_com")
+str(popnaiss) # ! ce n'est pas un data.frame
+
+# Reprise de la question 5
+popnaiss %>% 
+  filter(codgeo=="35047") %>% 
+  show_query()
+
+pop_bruz <- popnaiss %>% 
+  filter(codgeo=="35047") %>% 
+  collect()
+str(pop_bruz)
+
+```
+
+b. En s'inspirant de la syntaxe précédente (dplyr), refaire la question 6.
+
+
+### Exercice 3 - Manipulation de la Base Permanente des Equipements (BPE)
+
+Au-delà de la découverte de la source BPE, le but de cet exercice est aussi de poursuivre la manipulation de données via les requêtes SQL. 
+
+1. A partir de la table bpe21_metro, créer une table bpe_dep50 (dans votre environnement) pour le département de la Manche (DEP='50'). Cette table contiendra uniquement les variables ID, DEPCOM, DOM, SDOM, TYPEQU, GEOMETRY. Quel est le type d'objet retourné ?
+
+
+2. Refaire la question précédente en utilisant la fonction `st_read()`. La fonction st_read se comporte comme une fonction du package DBI sauf que l'argument `statement=` avec les fonctions DBI s'appelle `query=` avec st_read().
+
+
+3. Quel est le système de projection associé à la table de la question précédente ? Comparer ce système de projection avec celui de la table de la Réunion ("bpe21_04"). Pour retrouver le système de projection en utilisant une syntaxe PostGIS, vous pouvez utiliser le code suivant :
+
+```{r}
+dbGetQuery(conn, "SELECT DISTINCT(ST_SRID(geometry)) FROM bpe21_04;")
+```
+Comment aurait-on pu faire autrement avec le package `sf` ? 
+
+4. Dénombrer les maternités TYPEQU='D107' par region et trier par ordre décroissant. Vous utiliserez la table bpe21_metro et les variable REG et TYPEQU en particulier. Chaque équipement possède un identifiant (ID). Pour compter les maternités, vous devrez donc compter les identifiants. Faites cela soit en utilisant sf+dplyr soit en utilisant une requête SQL. 
+
+
+5. Changement de thème : on s'intéresse aux cinémas ! Sélectionner les cinémas (TYPEQU='F303') dans un rayon d'un 1km autour de la Sorbonne (5e arrondissemnt de Paris). On pourra utiliser les coordoonnées (long,lat) suivantes (lat = 48.84864, long = 2.34297) pour situer La Sorbonne. Attention, les coordonnées de longitude et de lattitude font référence au système WGS84 (CRS 4326).
+a. Créer la table "cinema_bpe" à partir de la table "bpe21_metro". Vous utiliserez une requête SQL ou une syntaxe sf+dplyr.
+
+b. Executez le code suivant. Ce code crée un "buffer" (périmètre) autour de la Sorbonne. 
+```{r}
+# On construit un buffer de 1km (une zone tampon) autour de la sorbonne
+  # df des coordonnées
+sorbonne_buffer <- data.frame(x=2.34297,y=48.84864) %>% 
+  #qu'on transforme en objet sf (systeme de proj WGS84 => crs=4326)
+    st_as_sf(coords = c("x","y"), crs = 4326) %>% 
+  # on reprojette en LAMBERT-93 (crs=2154)
+  st_transform(2154) %>% 
+  # on crée la zone tampon autour du point (l'unité est le mètre ici)
+  st_buffer(1000) 
+
+str(sorbonne_buffer) # le buffer est constitué d'un unique polygône
+plot(sorbonne_buffer %>% st_geometry()) # qui s'avère être un cercle
+```
+
+c. A partir de la table cinema_bpe, récupérer l'ensemble des cinémas contenus dans le buffer. Vous pouvez utiliser la fonction `st_within()` de `sf`.
+
+6. Représenter ces cinémas sur une carte leaflet en utilisant le code suivant. Les cinémas repérés sont-ils tous bien contenus dans le buffer ? Voyez-vous des cinémas qui n'auraient pas été filtrés?
+
+```{r}
+library(leaflet)
+# Optionnel :
+# On récupère une icone spécifique sur https://ionic.io/ionicons (mot clé film)
+cinemaIcons <- makeIcon(iconUrl = "images/film-sharp.png", 18,18)
+
+leaflet() %>% 
+  setView(lat = 48.84864, lng = 2.34297, zoom = 15) %>% 
+  addTiles() %>% 
+  addMarkers(lat = 48.84864, lng = 2.34297) %>% 
+  addCircles(
+    lat = 48.84864, lng = 2.34297, weight = 1, radius = 1000
+  ) %>% 
+  addMarkers(data = cinema_1km_sorbonne %>% st_transform(4326), icon = cinemaIcons)
+
+
+# Remarque : 1000m en LAMBERT-93 ce n'est pas exactement 1000m en WGS84 (zoomez sur la carte suivante)
+leaflet() %>%
+  setView(lat = 48.84864, lng = 2.34297, zoom = 15) %>%
+  addTiles() %>%
+  addCircles(
+    lat = 48.84864, lng = 2.34297, weight = 1, radius = 1000
+  ) %>%
+  addPolygons(data=sorbonne_buffer %>% st_transform(4326), col = "red")
+
+```
+
+
+### Exercice 4 - Illustration d'un problème fréquent de géolocalisation avec les boulodromes de PACA !
+
+Le but de cet exercice est de vous sensibiliser aux problèmes de cohérence pouvant exister entre deux sources géolocalisées. Bien que projeté dans un même CRS, les données peuvent ne pas correspondre. Cela est particulièrement fréquent lorsqu'on travaille avec des polygones simplifiés. Illustration :
+
+1. A partir de la table bpe21_metro, récupérer l'ensemble des boulodromes (TYPEQU="F102") de France. Vous stockerez cela au sein d'une table "boulodrome". A partir de la table regions_metro, créer une table "paca" qui ne contiendra que la région PACA (code='93').
+
+
+2. Créer une table boulodrome_paca en utilisant la geometry des 2 tables. L'idée est de faire une intersection des deux fonds. Vous ferez cette intersection au choix : soit en utilisant sf soit en utilisant PostGIS. Dans les deux cas, la fonction s'appelle `st_contains`.
+
+3. Le nombre de boulodromes en PACA issu de l'intersection correspond-t-il au nombre de boulodromes en PACA issu de la table bpe21_metro ? Pour faire cela :
+a. Récupérer les boulodromes de PACA en filtrant la bpe21_metro sur les variables `typequ = 'F102'`et `dep in ('04','05','06','13','83','84')`. 
+
+```{r}
+# on peut vérifier le résultat en récupérant directement les boulodromes de PACA depuis la BPE
+# Si des différences existent, essayez de comprendre pourquoi.
+boulodromes_paca_bis <- st_read(conn, query = "SELECT id, typequ, dep, qualite_xy, geometry FROM bpe21_metro WHERE typequ = 'F102' and dep in ('04','05','06','13','83','84');")
+```
+
+
+b. Executer le code suivant. Identifier les éventuels problèmes. Vous pouvez utiliser des cartes pour répondre à cette question.
+
+```{r}
+diff <- boulodromes_paca_bis %>% mutate(version_bis = TRUE) %>% 
+  st_join(
+    boulodromes_paca %>% mutate(version_orig = TRUE) %>% select(-typequ), by = "id"
+  ) %>% 
+  filter((is.na(version_bis) | (is.na(version_orig))))
+```
+
+
+
+
+### Exercice 5 - Bonus : construire des isochrones !
+
+Cet exercice traite des courbes isochrones. En cartographie, ces courbes désignent classiquement des lignes reliant des points situés à des temps de parcours identiques. Elles sont souvent utiles lorsqu'on cherche à identifier l'accessibilité d'un équipement.
+
+1. Choisir un équipement (= une ligne de la table bpe21_metro). Récupérer ses coordonnées et les convertir en WGS84 (epsg=4326)
+
+```{r}
+# Ici, on prend pour exemple les maternités
+mater <- sf::st_read(conn, query = "SELECT * FROM bpe21_metro WHERE TYPEQU='D107';") %>%
+  slice(1)
+  
+# On récupère ses coordonnées 
+mater_coords <- st_coordinates(mater) %>% as.numeric
+
+sf_reg_metro <- st_read(conn, query = "SELECT * FROM regions_metro")
+plot(st_geometry(sf_reg_metro))
+points(x = mater_coords[1], y = mater_coords[2], pch = 4, lwd = 2, cex = 1.5, col = "red")
+
+# On transforme ses coordonnées en WGS84 (epsg=4326)
+mater_coords <- st_coordinates(mater %>% st_transform(4326)) %>% as.numeric
+
+```
+
+2. Situer l'équipement sur une carte avec leaflet
+
+```{r}
+leaflet() %>% 
+  setView(lng = mater_coords[1], lat = mater_coords[2], zoom = 14) %>% 
+  addTiles() %>% 
+  addMarkers(lng = mater_coords[1], lat = mater_coords[2])
+```
+
+3. Calculer les isochrones avec osrm::osrmIsochrone
+
+```{r}
+# install.packages("osrm")
+# Attention, cela peut prendre quelques minutes
+iso <- osrm::osrmIsochrone(
+  loc = mater_coords, # coordonnées du point de référence
+  breaks = seq(0,60,10), # valeurs des isochrones à calculer en minutes
+  res = 100 # détermine le nombre de points utilisés (res*res) pour dessiner les isochornes 
+)
+str(iso)
+
+```
+
+4. Représenter ces isochrones sous forme d'une carte choroplèthe
+
+```{r}
+bks <-  sort(unique(c(iso$isomin, iso$isomax)))
+pals <- hcl.colors(n = length(bks) - 1, palette = "Red-Blue", rev = TRUE)
+plot(iso["isomax"], breaks = bks, pal = pals, 
+     main = "Isochrones (in minutes)", reset = FALSE)
+points(x = mater_coords[1], y = mater_coords[2], pch = 4, lwd = 2, cex = 1.5)
+
+leaflet() %>% 
+  setView(lng = mater_coords[1], lat = mater_coords[2], zoom = 8) %>% 
+  addTiles() %>% 
+  addMarkers(lng = mater_coords[1], lat = mater_coords[2]) %>% 
+  addProviderTiles(
+    providers$CartoDB.DarkMatter,
+    options = providerTileOptions(opacity = 0.4)) %>%
+  addPolygons(
+    data=iso, 
+    fillColor = pals,
+    smoothFactor = 0.3,
+    weight = 1,
+    opacity = 1,
+    color = "white",
+    dashArray = "3",
+    fillOpacity = 0.65
+  ) %>% 
+  addLegend(
+    position="bottomleft",
+    colors=pals,
+    labels=rev(c("50-60","40-50",
+                 "30-40","20-30","10-20", "0-10")),
+    opacity = 0.6,
+    title="Temps de trajet par la route (en minutes)")
+
+```
+
+
+
