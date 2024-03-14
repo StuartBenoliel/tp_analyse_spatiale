@@ -49,11 +49,12 @@ Vous utiliserez le fond des communes de France metropolitaine sur lequel vous ca
 
 ```{r}
 # Import des donnees 
+setwd("/home/onyxia/work/tp_analyse_spatiale")
 # Fond communes France metropolitaine
-communes_fm<- st_read("data/commune_francemetro_2021.shp", options = "ENCODING=WINDOWS-1252") %>% 
+communes_fm<- st_read("fonds/commune_francemetro_2021.shp", options = "ENCODING=WINDOWS-1252") %>% 
   select(code,libelle,surf)
 # Import des population légales des communes en 2019
-pop_com_2019<-openxlsx::read.xlsx("data/Pop_legales_2019.xlsx")
+pop_com_2019<-openxlsx::read.xlsx("donnee/Pop_legales_2019.xlsx")
 # Correction pour la ville de Paris
 pop_com_2019<-pop_com_2019 %>% 
   mutate(COM=if_else(substr(COM,1,3)=="751","75056",COM)) %>% 
@@ -222,11 +223,11 @@ library(dplyr)
 library(mapsf)
 library(openxlsx)
 # Import des donnees
-dep_francemetro_2021<-st_read("data/dep_francemetro_2021.shp",
+dep_francemetro_2021<-st_read("fonds/dep_francemetro_2021.shp",
   options = "ENCODING=WINDOWS-1252")
-tx_pauvrete<-read.xlsx("data/Taux_pauvrete_2021.xlsx")
+tx_pauvrete<-read.xlsx("donnee/Taux_pauvrete_2021.xlsx")
 # Import du fond de la mer (optionnel)
-mer<-st_read("data/merf_2021.shp")
+mer<-st_read("fonds/merf_2021.shp")
 # Résumé des jeux de données
 str(dep_francemetro_2021)
 str(tx_pauvrete)

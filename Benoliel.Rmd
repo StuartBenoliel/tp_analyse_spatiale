@@ -1,0 +1,188 @@
+---
+title: "TP noté - Introduction à la statistique spatiale"
+authors : Benoliel Stuart
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## **Consignes:**
+
+**LE TP DURE 2H**
+
+- Le TP se fait seul(e). Le smartphone est interdit. Tous les documents (y compris les programmes des TP précédents) et internet sont autorisés. En revanche, toute communication et toute aide de type IA est interdite (Chatgpt ou Gemini en particulier) sous d'exclusion de l'examen. 
+
+- Vous travaillerez directement dans le sujet. Vous nommerez le programme de la manière suivante: Nom.Rmd. Pour rajouter des chuncks de code sous chaque question, vous pouvez utiliser le raccourci clavier CTRL+MAJ+I
+
+
+---
+
+
+0. Commencer par renseigner votre nom et prénom en face de "authors:" en haut du programme. Pour le TP, vous aurez besoin des packages suivants :
+
+
+```{r}
+library(dplyr)
+library(sf)
+library(mapsf)
+library(spdep)
+```
+
+
+### Exercice 1
+
+Nous disposons de données économiques sur la ville de New York. Les observations sont découpées en "Neighborhood Tabulation Areas" (NTA). Il s'agit d'un découpage utilisé pour le recensement aux Etats-Unis. 
+
+
+1. Importer le fichier econ_2016acs5yr_nta.xlsx avec la fonction readxl::read_xlsx(). Ne conserver que les colonnes GeoID (id du NTA), GeogName (nom du NTA), PerCapIncE (Per Capita Income Estimates). Vous pouvez nommer votre fichier nta_nyc.
+
+```{r}
+rm(list=ls())
+nta_nyc <- readxl::read_xlsx("econ_2016acs5yr_nta.xlsx") %>% select(GeoID, GeogName, PerCapIncE)
+```
+
+
+2. Importer le fond géographique des NTA (geo_nta.gpkg). Quel est le systeme de projection du fond ?
+Dresser la carte des NTA en ne faisant apparaître que les polygônes.
+
+```{r}
+geo_nta <- st_read("geo_nta.gpkg")
+
+st_crs(geo_nta)
+# WGS84(DD)
+
+plot(st_geometry(geo_nta), lwd = 0.5)
+
+```
+
+3. Faites la jointure entre ces 2 tables.
+
+```{r}
+nta <- geo_nta %>% left_join(nta_nyc, by= join_by(ntacode == GeoID)) %>% select(!GeogName)
+str(nta)
+
+```
+
+4. Représenter la variable de revenu par tête sous forme de carte. Pour cela, vous discrétiserez votre variable (découpage en classes). A vous de choisir la méthode qui vous semble la plus pertinente.
+
+```{r}
+summary(nta$PerCapIncE)
+hist(nta$PerCapIncE)
+
+plot(nta["PerCapIncE"], breaks = "quantile", main="quantile") 
+plot(nta["PerCapIncE"], breaks = "sd", main="sd") 
+plot(nta["PerCapIncE"], breaks = "jenks", main="jenks")
+plot(nta["PerCapIncE"], breaks = "pretty", main="pretty")
+
+# Au vu de la distribution des données non uniforme et les cartes ci dessous présentant différant découpages, 
+# la méthodes de jenks permet de mieux différencier les revenus par tête
+```
+
+5a. La carte semble-t-elle suggérer un phénomène d'autocorrélation spatiale ? A vous de le vérifier avec les outils vus en cours. Vous expliquerez chaque étape de votre démarche et commenterez vos résultats.
+Vous veillerez à retirer préalablement les valeurs manquantes pour faciliter vos traitements.
+
+```{r}
+nta <- nta %>% filter(!is.na(PerCapIncE))
+
+plot(nta["PerCapIncE"], breaks = "jenks")
+# On remarque notamment au nord un agglomérat de quartiers riches au niv de Manhattan et encore un peu plus au Nord un agglomérat de quartier pauvre
+# Une autocorrélation positive semble possible
+
+# On utilise une définition du voisinage au sens de la contiguité qui semble pertinente 
+voisins <- poly2nb(nta)
+ponderation <- nb2listw(voisins, zero.policy = TRUE)
+moran.test(scale(nta$PerCapIncE), ponderation, randomisation = TRUE)
+# On rejette le test, I de moran positif -> phénomène d'autocorrélation positive global
+
+```
+
+5b. Commentez les valeurs des LISA associées aux observations n°20 (nta 	
+Far Rockaway-Bayswater) et n°80 (nta Midtown-Midtown South)
+
+```{r}
+nta_lisa <- spdep::localmoran(nta$PerCapIncE, ponderation, zero.policy = TRUE)
+
+class(nta_lisa)
+str(nta_lisa, max.level=1)
+summary(nta_lisa)
+
+nta_lisa[c(20,80),1]
+# Les observations numéro 20 et 80 ont des I de moran locaux quasiment supérieur à
+# 75 % des autres nta. Ils sont positifs (et significativement distinct de zéro) 
+# donc marqueur d'une autocorrélation positive.
+```
+
+6. Faites une carte représentant les NTA pour lesquels le LISA est particulièrement significatif. Votre carte contiendra 4 couleurs : 
+
+- en rouge les NTA de type High-High significatifs au seuil de 10%, 
+- en bleu ceux de type Low-Low significatifs au seuil de 10%, 
+- en jaune les NTA avec autocorrélation négative significative au seuil de 10% 
+- en gris les NTA non significatifs au seuil de 10%.
+
+Un bonus sera accordé si vous faites la carte en dynamique (mapview ou leaflet)
+
+```{r}
+
+nta <- nta %>% mutate(PerCapIncE_scale = scale(PerCapIncE),
+                      LISA = nta_lisa[,"Ii"],
+                      LISA_PVAL = nta_lisa[,5],
+                      CLASS = case_when(LISA_PVAL > 0.1 ~ "Non significatif" ,
+                                        LISA < 0 ~ "Négative significatif",
+                                        LISA > 0 & PerCapIncE_scale < 0 ~ "Low-Low",
+                                        LISA >0 & PerCapIncE_scale > 0 ~ "High-High",
+                                        .default = NA))
+# Problème de p_value pour Rikers Island -> on décide de l'enlever
+nta_no_na <- nta %>% filter(!is.na(CLASS))
+
+mapview(
+  nta_no_na,
+  z="CLASS",
+  col.regions = c("red", "blue", "yellow", "grey"),
+  label="ntaname", layer.name = "NTA Autocorrelation"
+)
+
+```
+
+## Exercice 2 (non prioritaire, à faire dans un second temps)
+
+0. Importer les fonds geo_nta.gpkg et geo_boro.gpkg.
+
+```{r}
+rm(list=ls())
+geo_nta <- st_read("geo_nta.gpkg")
+geo_boro <- st_read("geo_boro.gpkg")
+# Même système de projection, on peut intersecter sans problème
+```
+
+
+1. On souhaite savoir dans quel(s) quartier(s) ("Borough") appartient chaque NTA (variable boro_name)? Pour répondre à cette question vous ferez une intersection entre les fonds geo_nta.gpkg et geo_boro.gpkg. 
+
+```{r}
+intersection<-st_intersection(geo_nta,geo_boro)
+```
+
+2. En utilisant la question précédente, combien y a t'il de NTA à cheval sur plusieurs quartiers ?
+
+```{r}
+# Le plus simple est de regarder via st_intersects
+intersects<-st_intersects(geo_nta,geo_boro)
+length(which(lengths(intersects)>1))
+# 30
+```
+
+3. Récupérez les noms de ces NTA à cheval sur plusieurs quartiers (on ne vous demande pas d'afficher quels sont les quartiers sur lesquels ils sont présents).
+
+```{r}
+nta_cheval <- geo_nta[which(lengths(intersects)>1),2] %>%
+      st_drop_geometry()
+```
+
+4. Prenez un de ces NTA au choix et donner les quartiers sur lesquels il se trouve.
+
+```{r}
+intersection %>% filter(ntaname == nta_cheval[1,]) %>% select(boro_name) %>%
+      st_drop_geometry()
+```
+

@@ -41,8 +41,9 @@ Vous utiliserez le fond des communes des Iris France entiere ainsi que les donn√
 
 ```{r}
 # Import des donn√©es
-iris<-st_read("./iris_franceentiere_2021/iris_franceentiere_2021.shp", options = "ENCODING=UTF8")
-data<-read.csv2("./data/BASE_TD_FILO_DISP_IRIS_2018.csv",sep=";",dec=".", encoding = "utf-8")
+setwd("/home/onyxia/work/tp_analyse_spatiale")
+iris<-st_read("./fonds/iris_franceentiere_2021.shp", options = "ENCODING=UTF8")
+data<-read.csv2("./donnee/BASE_TD_FILO_DISP_IRIS_2018.csv",sep=";",dec=".", encoding = "utf-8")
 
 # Jointure
 marseille<-iris %>% 

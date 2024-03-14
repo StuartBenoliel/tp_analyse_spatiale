@@ -1,0 +1,175 @@
+---
+title: "Lissage spatial"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE, error=TRUE,eval = FALSE)
+```
+
+------------------------------------------------------------------------
+
+## **OBJECTIFS DU TP:**
+
+-   Le but de ce TP est de s'initier au lissage spatial à l'aide du package btb. Vous trouverez la [vignette du package ici](https://cran.r-project.org/web/packages/btb/vignettes/btb.html)
+
+Aﬁn d'utiliser une version de R plus récente (et une version du package sf plus récente aussi), vous travaillerez de préférence soit :
+
+-   sur votre ordinateur personnel
+-   sur le datalab (plateforme du sspcloud, service de l'Insee) : <https://datalab.sspcloud.fr>.
+
+Bibliographie:  
+
+- Chapitre 8 du Manuel d'Analyse Spatiale (Insee Méthodes n. 131, 2018, pp.211-237): [file:///C:/Users/tmm7an/Downloads/imet131-l-chapitre-8.pdf](file:///C:/Users/tmm7an/Downloads/imet131-l-chapitre-8.pdf)  
+
+------------------------------------------------------------------------
+
+Commencer par créer un projet pour cette séance de TP. Vous placerez votre projet dans un répertoire personnel. Ouvrir un nouveau programme R. Vous aurez besoin des packages suivants pour le TP :
+
+```{r}
+# Chargement des packages
+library(sf)
+library(dplyr)
+library(mapsf)
+library(btb)
+
+```
+
+## Exercice 1
+
+**Préparation des données**
+
+1.a Importer la base des accidents de la route (caracteristiques-2022.csv). Vous la nommerez 'accidents'
+
+```{r}
+accidents <- read.csv2("carcteristiques-2022.csv")
+```
+
+1.b Regardez le descriptif de la table (variables). Quelles variables font référence aux coordonnées géographiques. Quelle est selon vous le système de projection utilisé ?
+
+```{r}
+str(accidents)
+summary(accidents)
+```
+
+1.c Transformez la table en objet sf puis changez le système de projection pour le faire passer en lambert93 (crs=2154). L'utilisation du lambert93 est nécessaire pour que les fonctions de carroyage et de distances (par exemple) puissent fonctionner au sein du package btb.
+
+```{r}
+# Attention : ordre important : longitude puis latitude
+accidents_sf<-st_as_sf(accidents, coords = c("long","lat"), crs=4326) %>% 
+  st_transform(2154)
+
+```
+
+2.a Faire une première représentation cartographique des données à l'aide la fonction `plot()`. Quels territoires couvre le jeu de données.
+
+```{r}
+plot(st_geometry(accidents_sf))
+```
+
+2.b Sélectionnez uniquement les données de France Métropolitaine et stockez cette table sous le nom "accidents_metro".
+
+```{r}
+# De manière un peu sauvage
+accidents_metro<-accidents_sf %>% 
+  filter(as.numeric(substr(com,1,2))<96)
+
+plot(st_geometry(accidents_metro))                       
+
+```
+
+3.a Sur cette nouvelle table, créer les centroids de carreaux de 20km. Vous utiliserez la fonction `btb_add_centroids()`. N'hésitez-pas à consulter la vignette du package btb pour vous aider.
+
+```{r}
+accidents_metro<-btb_add_centroids(accidents_metro, iCellSize = 20000)
+
+```
+
+
+3.b Créer ensuite une table avec le regroupement d'accidents par carreaux. Cela revient à compter les accidents associés à chaque centroid.
+
+```{r}
+centro_values <- accidents_metro %>%
+  count(x_centro , y_centro ) %>%
+  #on supprime la géométrie initiale (les points des accidents)
+  st_drop_geometry() %>% 
+  # on ajoute une nouvelle géométrie (les centroides des carreaux de 20km)
+  st_as_sf(coords = c(X,Y"))
+
+plot(st_geometry(centro_values))
+```
+
+3.c On souhaite maintenant carroyer nos données (carreaux de 20km). Utilisez la fonction `btb_ptsToGrid()`.
+
+```{r}
+grid_values <- btb_ptsToGrid(centro_values, sEPSG = 2154, iCellSize = 20000)
+```
+
+3.d En utilisant le package mapsf, représentez le nombre d'accidents sous forme de carte choroplèthe. Vous utiliserez la méthode des quantile pour discrétiser votre variable sous 5 modalités.
+
+```{r}
+mapsf::mf_map(x = grid_values,
+              type = "choro",
+              var="n",
+              breaks = "???",
+              nbreaks = ???,
+              lwd=1,
+              leg_val_rnd = 1)
+
+
+```
+
+**Lissage spatial**
+
+4.a Créer une variable indicatrice qui vaudra 1 pour chaque accident de la table accident_metro. Retirez toutes les autres variables.
+
+```{r }
+pts_density<-accidents_metro %>% 
+  m-----???(nb=1) %>% 
+  select(nb)
+
+```
+
+b. Effectuez le lissage spatial. Il faut pour cela définir la taille du carreau et la bande passante. On peut faire plusieurs cas : carreaux large et bande passante large jusqu'à réduire pour avoir quelque chose de plus lisible. 
+
+Testez par exemple les combinaisons de : 
+Bandwith=(20000, 10000, 5000)
+CellSize=(5000, 2000)
+
+Représentez à chaque fois le lissage obtenu sous forme de carte. vous pourrez utilisez une carte choroplèthe et comparer les cartes selon la méthode de discréatisation : quantile ou fisher.
+
+```{r}
+# Je crée une fonction pour ne pas avoir à répéter plusieurs fois le même code
+lissage_carto<-function(band, cell, discretisation){
+
+  # Lissage spatial
+  smooth_density <- btb_smooth(
+  pts = pts_density,
+  sEPSG = 2154,
+  iBandwidth = band, # paramètre de bandwith
+  iCellSize = cell) # paramètre de cellsize
+
+  # Représentation cartographique
+  mapsf::mf_map(x = smooth_density,
+                type = "choro",
+                var="nb",
+                breaks = discretisation,
+                nbreaks = 5,
+                border = NA,
+                leg_val_rnd = 1)
+
+}
+
+# On remarque au passage l'importance de la méthode de discrétisation. 
+# En utilisant les quantiles : 
+# Quand on fait au + gros, on voit apparaitre les grosses agglo (Paris, Lyon, Marseille) + littoral
+# Quand on affine on voit apparaître certains réseaux routiers (en particulier l'axe Lyon-Marseille)
+
+# En utilisant Fisher, on retrouve surtout la présences des grandes villes et villes moyennes mais pas forcément le réseau routier.
+lissage_carto(band = 20000, cell = 5000, discretisation =  "quantile")
+lissage_carto(band = 10000, cell = 5000, discretisation =  "quantile")
+lissage_carto(band = 10000, cell = 5000,discretisation =  "fisher")
+lissage_carto(band = 5000, cell = 2000, discretisation =  "fisher")
+```
+
+On se rend compte que les résultats dépendent énormément du choix de la bande passante. Des méthodes existent pour définir la bande passante optimale -> plus d'outils dans le manuel d'analyse spatiale de l'Insee
